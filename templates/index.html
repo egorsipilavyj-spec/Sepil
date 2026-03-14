@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>SepilM</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        .msg-img { max-width: 250px; border-radius: 10px; margin-top: 5px; cursor: pointer; }
+        .clip-btn { background: none; border: none; font-size: 18px; cursor: pointer; color: #666; width: 24px; padding: 0; margin-left: 5px; }
+        .top-btn { 
+            background: rgba(255,50,50,0.15); border: 1px solid rgba(255,50,50,0.2); 
+            color: #ff8080; padding: 2px 8px; border-radius: 4px; font-size: 9px; 
+            cursor: pointer; width: fit-content; height: fit-content;
+        }
+        .top-btn:hover { background: rgba(255,0,0,0.4); color: #fff; }
+        .chat-type-select { background: none; border: none; color: #3b82f6; font-size: 10px; cursor: pointer; outline: none; }
+        #input-area { padding: 8px 12px; display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,0.25); border-top: 1px solid rgba(255,255,255,0.05); }
+    </style>
+</head>
+<body>
+
+    <div id="auth-screen">
+        <h2 id="auth-title">SepilM</h2>
+        <div id="reg-box" class="hidden"><input type="text" id="reg-nick" placeholder="Имя"></div>
+        <input type="text" id="auth-user" placeholder="Логин">
+        <input type="password" id="auth-pass" placeholder="Пароль">
+        <button id="auth-btn" onclick="submitAuth()">ВОЙТИ</button>
+        <p id="toggle-text" style="cursor:pointer; font-size:11px; margin-top:12px; color:#888;" onclick="toggleAuth()">Регистрация</p>
+    </div>
+
+    <div id="messenger-ui" class="hidden">
+        <div id="sidebar">
+            <div style="padding:15px; display:flex; align-items:center; gap:10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div id="my-av-place"></div>
+                <b id="my-name-display" style="font-size:14px;">User</b>
+            </div>
+            <div style="padding:10px;"><input type="text" id="find-user" placeholder="Поиск @юзера..." onkeypress="if(event.key=='Enter') startChat(this.value)"></div>
+            <div id="chat-list" style="flex-grow:1; overflow-y:auto;"></div>
+            <button onclick="logout()" style="background:#1a1d24; border-radius:0; height: 40px; font-size: 10px; color:#777;">ВЫЙТИ ИЗ АККАУНТА</button>
+            <button onclick="openSettings()" style="background:#242933; border-radius:0; height: 45px; font-size: 12px;">⚙️ НАСТРОЙКИ</button>
+        </div>
+        
+        <div id="chat-main">
+            <div id="chat-header" class="hidden" style="padding:5px 15px; background:rgba(0,0,0,0.3); display:flex; align-items:center; justify-content: space-between; min-height: 55px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <div id="target-av-place"></div>
+                    <div>
+                        <b id="target-header-name" style="font-size: 13px;">@user</b><br>
+                        <select class="chat-type-select">
+                            <option>Обычный чат</option>
+                            <option>RAM (End-to-End)</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="top-btn" onclick="alert('Report Sent')">REPORT</button>
+            </div>
+            <div id="messages"></div>
+            <div id="input-area" class="hidden">
+                <button class="clip-btn" onclick="document.getElementById('msg-file').click()">📎</button>
+                <input type="file" id="msg-file" class="hidden" onchange="sendFile()">
+                <input type="text" id="m-text" placeholder="Сообщение..." onkeypress="if(event.key=='Enter') sendMsg()">
+                <button onclick="sendMsg()" style="width:45px; background: #3b82f6; font-size:14px;">></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="hidden">
+        <h3>Профиль</h3>
+        <input type="text" id="set-nick">
+        <input type="password" id="set-pass" placeholder="Новый пароль">
+        <input type="file" id="set-av-file">
+        <button onclick="saveProfile()" style="margin-top:10px;">ОК</button>
+        <button onclick="closeSettings()" style="background:#444; margin-top:5px;">ОТМЕНА</button>
+    </div>
+
+<script>
+    const socket = io();
+    let me = "", myNick = "", myAv = "", curTarget = "", curRoom = "", isRegMode = false;
+    const sndOut = new Audio('/send.mp3'), sndIn = new Audio('/mesage.mp3');
+
+    // --- ПРОВЕРКА КУКИ (LocalStorage) ПРИ ЗАГРУЗКЕ ---
+    window.onload = () => {
+        const savedU = localStorage.getItem('sepil_user');
+        const savedP = localStorage.getItem('sepil_pass');
+        if(savedU && savedP) {
+            socket.emit('auth_action', {user: savedU, pass: savedP, mode: 'login'});
+        }
+    };
+
+    function toggleAuth() {
+        isRegMode = !isRegMode;
+        document.getElementById('reg-box').classList.toggle('hidden', !isRegMode);
+        document.getElementById('auth-title').innerText = isRegMode ? "РЕГИСТРАЦИЯ" : "SepilM";
+        document.getElementById('auth-btn').innerText = isRegMode ? "СОЗДАТЬ" : "ВОЙТИ";
+    }
+
+    function submitAuth() {
+        const u = document.getElementById('auth-user').value.trim();
+        const p = document.getElementById('auth-pass').value;
+        const n = document.getElementById('reg-nick').value.trim();
+        socket.emit('auth_action', {user:u, pass:p, nick:n, mode: isRegMode ? 'reg' : 'login'});
+    }
+
+    socket.on('auth_res', d => {
+        if(d.status === 'ok') {
+            if(d.mode === 'reg') { alert("OK!"); toggleAuth(); }
+            else {
+                me = d.user; myNick = d.nick; myAv = d.avatar;
+                // СОХРАНЯЕМ В КУКИ
+                localStorage.setItem('sepil_user', me);
+                localStorage.setItem('sepil_pass', d.raw_pass);
+
+                document.getElementById('auth-screen').classList.add('hidden');
+                document.getElementById('messenger-ui').classList.remove('hidden');
+                updateUI();
+                socket.emit('load_sidebar', me);
+            }
+        } else {
+            localStorage.clear();
+            if(!isRegMode) alert(d.msg);
+        }
+    });
+
+    function logout() {
+        localStorage.clear();
+        location.reload();
+    }
+
+    function updateUI() {
+        document.getElementById('my-name-display').innerText = myNick;
+        drawAv(myAv, myNick, 'my-av-place');
+    }
+
+    function drawAv(url, nick, id) {
+        const el = document.getElementById(id); if(!el) return;
+        if(url) el.innerHTML = `<img src="${url}" class="avatar-circle">`;
+        else el.innerHTML = `<div class="avatar-circle" style="background:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:12px;">${nick ? nick[0].toUpperCase() : "?"}</div>`;
+    }
+
+    function startChat(t) {
+        curTarget = t.replace('@','');
+        socket.emit('join_chat', {me: me, target: curTarget});
+    }
+
+    socket.on('history', d => {
+        curRoom = d.room;
+        document.getElementById('chat-header').classList.remove('hidden');
+        document.getElementById('input-area').classList.remove('hidden');
+        document.getElementById('target-header-name').innerText = "@" + d.target;
+        drawAv(d.av, d.nick, 'target-av-place');
+        const box = document.getElementById('messages'); box.innerHTML = '';
+        d.msgs.forEach(m => addBubble(m.sender, m.msg, m.type));
+    });
+
+    function sendMsg() {
+        const txt = document.getElementById('m-text');
+        if(!txt.value || !curRoom) return;
+        socket.emit('send_msg', {me: me, target: curTarget, msg: txt.value, room: curRoom, type: 'text'});
+        sndOut.play().catch(()=>{});
+        txt.value = '';
+    }
+
+    async function sendFile() {
+        const file = document.getElementById('msg-file').files[0];
+        if(!file || !curRoom) return;
+        const fd = new FormData(); fd.append('file', file);
+        const res = await fetch('/upload', {method:'POST', body:fd});
+        const d = await res.json();
+        socket.emit('send_msg', {me: me, target: curTarget, msg: d.url, room: curRoom, type: 'img'});
+        document.getElementById('msg-file').value = "";
+    }
+
+    socket.on('new_msg', d => {
+        addBubble(d.sender, d.text, d.type);
+        if(d.sender !== me) sndIn.play().catch(()=>{});
+    });
+
+    socket.on('refresh_sidebar', () => { if(me) socket.emit('load_sidebar', me); });
+
+    function addBubble(s, t, type) {
+        const b = document.createElement('div');
+        b.className = `bubble ${s === me ? 'me' : 'them'}`;
+        if(type === 'img') b.innerHTML = `<img src="${t}" class="msg-img" onclick="window.open(this.src)">`;
+        else b.innerText = t;
+        const box = document.getElementById('messages');
+        box.appendChild(b);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    socket.on('sidebar_data', d => {
+        const list = document.getElementById('chat-list'); list.innerHTML = '';
+        d.forEach(c => {
+            const item = document.createElement('div');
+            item.className = 'chat-item';
+            item.style = "display:flex; align-items:center; gap:10px; padding:10px 15px; cursor:pointer;";
+            item.innerHTML = `<div id="sid-${c.contact}"></div> <span style="font-size:13px;">${c.nickname}</span>`;
+            item.onclick = () => startChat(c.contact);
+            list.appendChild(item);
+            drawAv(c.avatar, c.nickname, `sid-${c.contact}`);
+        });
+    });
+
+    function openSettings() { document.getElementById('set-nick').value = myNick; document.getElementById('settings-modal').classList.remove('hidden'); }
+    function closeSettings() { document.getElementById('settings-modal').classList.add('hidden'); }
+    async function saveProfile() {
+        const file = document.getElementById('set-av-file').files[0];
+        let url = myAv;
+        if(file) {
+            const fd = new FormData(); fd.append('file', file);
+            const res = await fetch('/upload', {method:'POST', body:fd});
+            const d = await res.json(); url = d.url;
+        }
+        socket.emit('update_profile', {user: me, nick: document.getElementById('set-nick').value, pass: document.getElementById('set-pass').value, avatar: url});
+    }
+    socket.on('profile_res', (d) => {
+        if(d.new_pass) localStorage.setItem('sepil_pass', d.new_pass);
+        location.reload();
+    });
+</script>
+</body>
+</html>
