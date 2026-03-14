@@ -84,12 +84,13 @@
 
     // --- ПРОВЕРКА КУКИ (LocalStorage) ПРИ ЗАГРУЗКЕ ---
     window.onload = () => {
-        const savedU = localStorage.getItem('sepil_user');
-        const savedP = localStorage.getItem('sepil_pass');
-        if(savedU && savedP) {
-            socket.emit('auth_action', {user: savedU, pass: savedP, mode: 'login'});
-        }
-    };
+    const savedU = localStorage.getItem('sepil_user');
+    const savedP = localStorage.getItem('sepil_pass');
+    if(savedU && savedP) {
+        // Показываем какой-нибудь индикатор загрузки, если хочешь
+        socket.emit('auth_action', {user: savedU, pass: savedP, mode: 'login'});
+    }
+};
 
     function toggleAuth() {
         isRegMode = !isRegMode;
